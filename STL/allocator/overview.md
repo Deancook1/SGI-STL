@@ -50,7 +50,7 @@
 
 ## 2：代码逻辑
 ### 2.1 ：流程图
-![Example Image](./images/deepseek_mermaid_20250611_911423.png)
+![Example Image](https://github.com/Deancook1/SGI-STL/blob/master/STL/allocator/images/deepseek_mermaid_20250611_911423.png)
 通过宏定义来控制代码的生成逻辑
 
 ### 2.2 : SGI STL 内存分配器类功能解析
