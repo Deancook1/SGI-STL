@@ -18,6 +18,7 @@
 // <stl_alloc.h> 被包含到其它的 STL 头文件中，并不是直接使用
 // SGI STL 两级配置
 
+// 典型的头文件保护宏
 #ifndef __SGI_STL_INTERNAL_ALLOC_H
 #define __SGI_STL_INTERNAL_ALLOC_H
 
@@ -60,16 +61,16 @@
 #  define __RESTRICT
 #endif
 
-#ifdef __STL_THREADS
+#ifdef __STL_THREADS  //这里检查STL是否支持多线程，在STL的初始版本，多线程不是这么普遍，锁操作是比较昂贵的系统调用，单线程占据多数情况
 # include <stl_threads.h>
 # define __NODE_ALLOCATOR_THREADS true
-# ifdef __STL_SGI_THREADS
+# ifdef __STL_SGI_THREADS  // 在支持多线程的情况下，检查是否支持特定系统的存在
   // We test whether threads are in use before locking.
   // Perhaps this should be moved into stl_threads.h, but that
   // probably makes it harder to avoid the procedure call when
   // it isn't needed.
     extern "C" {
-      extern int __us_rsthread_malloc;
+      extern int __us_rsthread_malloc;   // SGI 线程存在特殊之处，需要再内存分配方面检查__us_rsthread_malloc 方面
     }
 	// The above is copied from malloc.h.  Including <malloc.h>
 	// would be cleaner but fails with certain levels of standard
@@ -93,12 +94,14 @@
 
 __STL_BEGIN_NAMESPACE
 
+// 这个是在设置 SGI IRIX 系统某一类编译器预警不报
 #if defined(__sgi) && !defined(__GNUC__) && (_MIPS_SIM != _MIPS_SIM_ABI32)
 #pragma set woff 1174
 #endif
 
 // Malloc-based allocator.  Typically slower than default alloc below.
 // Typically thread-safe and more storage efficient.
+// 这个宏代表如果在模版内部定义 static 成员变量存在缺陷，而定义static 成员函数是可以的。所以需要在这里定义去定义内存分配失败时的函数 __malloc_alloc_oom_handler，作为全局变量或者是外部变量
 #ifdef __STL_STATIC_TEMPLATE_MEMBER_BUG
 # ifdef __DECLARE_GLOBALS_HERE
     void (* __malloc_alloc_oom_handler)() = 0;
@@ -115,7 +118,7 @@ class __malloc_alloc_template {
 
 private:
   
-  // 以下函数将用来处理内存不足的情况
+  // 以下函数将用来处理内存不足的情况，作为 static 函数保存起来
   static void* _S_oom_malloc(size_t);
   static void* _S_oom_realloc(void*, size_t);
 
@@ -202,10 +205,10 @@ void* __malloc_alloc_template<__inst>::_S_oom_realloc(void* __p, size_t __n)
     }
 }
 
-// 直接将参数 __inst 指定为0
+// 直接将参数 __inst 指定为0，__inst 参数没啥用
 typedef __malloc_alloc_template<0> malloc_alloc;
 
-// 单纯地转调用，调用传递给配置器(第一级或第二级)；多一层包装，使 _Alloc 具备标准接口
+// 单纯地转调用，调用传递给配置器(第一级或第二级)；多一层包装，使 _Alloc 具备标准接口，使得可以面向对象编程
 template<class _Tp, class _Alloc>
 class simple_alloc {
 
@@ -226,6 +229,8 @@ public:
 // NDEBUG, but it's far better to just use the underlying allocator
 // instead when no checking is desired.
 // There is some evidence that this can confuse Purify.
+// 这里是在调试检查_Alloc 分配释放内存是否正确，额外分配了 _S_extra 空间，在这个空间中保存了实际分配内存的大小
+// 在调用reallocate  或者是 deallocate 的时候使用assert 来检查分配内存是否正确。
 template <class _Alloc>
 class debug_alloc {
 
@@ -325,11 +330,27 @@ private:
 
 __PRIVATE:
   // free-list 的节点结构，降低维护链表 list 带来的额外负担
+  // 每一个节点既有既有可能作为作为一个内存空间，又有可能作为一个存储在 _S_free_list 的链表中的一个成员。通过指针强转来获取不同的值来获取不同的语义
+  /*
+   这种模式（单元素数组作为变长缓冲区起点）在底层代码（如内存池、网络协议栈）中广泛使用，但需满足以下条件：
+
+  内存实际可用：通过额外分配确保后续空间合法（如malloc(sizeof(_Obj) + extra_size)）。
+
+  手动管理边界：程序员需自行保证访问不超出实际分配范围。
+
+  编译器态度：
+
+  大多数编译器（如GCC/Clang）默认不检查静态数组越界，除非启用特定选项（如-fsanitize=bounds）。
+
+  但标准仍视为UB，可能在高优化下引发问题
+  */
+ 
   union _Obj {
         union _Obj* _M_free_list_link;  // 利用联合体特点
         char _M_client_data[1];    /* The client sees this.        */
   };
 private:
+// 在某些编译器中，直接指定
 # if defined(__SUNPRO_CC) || defined(__GNUC__) || defined(__HP_aCC)
     static _Obj* __STL_VOLATILE _S_free_list[]; 
         // Specifying a size results in duplicate def for 4.1
@@ -545,6 +566,7 @@ __default_alloc_template<__threads, __inst>::_S_refill(size_t __n)
     /* Build free list in chunk */
       __result = (_Obj*)__chunk;
       *__my_free_list = __next_obj = (_Obj*)(__chunk + __n);  // 第0个数据块给调用者，地址访问即chunk~chunk + n - 1  
+      // 到了这里才是真正的将分配好的内存填充到链表中去
       for (__i = 1; ; __i++) {
         __current_obj = __next_obj;
         __next_obj = (_Obj*)((char*)__next_obj + __n);
@@ -632,6 +654,7 @@ public:
   typedef const _Tp& const_reference;
   typedef _Tp        value_type;
 
+  // 通过other 可以实现与allocator相同的内存分配逻辑，但是分配不同的类型
   template <class _Tp1> struct rebind {
     typedef allocator<_Tp1> other;
   };
@@ -696,6 +719,8 @@ inline bool operator!=(const allocator<_T1>&, const allocator<_T2>&)
 // member functions are static member functions.  Note, also, that 
 // __allocator<_Tp, alloc> is essentially the same thing as allocator<_Tp>.
 
+// allocator 直接依赖SGI内部的alloc ，无法更换其他分配器，这种方式固定实现，不可替换底层。
+// __allocator 通过模板参数 _Alloc 解耦具体分配器实现，允许任意分配器（如 malloc_alloc、__default_alloc）被适配成标准接口，可包装任意__Alloc,直接内部实现细节，通常不直接使用
 template <class _Tp, class _Alloc>
 struct __allocator {
   _Alloc __underlying_alloc;
